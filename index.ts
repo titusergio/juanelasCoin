@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import express from 'express';
 import { WalletI, WalletModel } from './models/wallet';
 import * as rsa from './models/rsa'
+import * as bc from "bigint-conversion";
 
 
 const PORT = 4000
@@ -19,16 +20,21 @@ mongoose.connect(CONNECTION_URL)
   .catch((error) => console.log(`${error} no se pudo conectar`));
 
 
+interface publicKeyI {
+  e : bigint,
+  n : bigint
+}
+
 // Transfer of funds between two wallets
 class Transaction {
   constructor(
     public amount: number, 
-    public payer: string, // public key
-    public payee: string // public key
+    public payer: publicKeyI, // public key
+    public payee: publicKeyI // public key
   ) {}
 
-  toString() {
-    return JSON.stringify(this);
+  serialize() {
+    return this.amount
   }
 }
 
@@ -44,7 +50,7 @@ class Block {
   ) {}
 
   get hash() {
-    const str = JSON.stringify(this);
+    const str = JSON.stringify(this.prevHash + this.nonce + this.ts);
     const hash = crypto.createHash('SHA256');
     hash.update(str).end();
     return hash.digest('hex');
@@ -52,17 +58,31 @@ class Block {
 }
 
 
+
+
+
 // The blockchain
 class Chain {
   // Singleton instance
   public static instance = new Chain();
 
+  firstSender =  {
+    e : 1234n,
+    n : 3432525n
+  }
+
+  firstReceiver =  {
+    e : 1234n,
+    n : 3432125n
+  }
+
   chain: Block[];
 
   constructor() {
+    
     this.chain = [
       // Genesis block
-      new Block('', new Transaction(100, 'genesis', 'satoshi'))
+      new Block('', new Transaction(100, this.firstSender, this.firstReceiver))
     ];
   }
 
@@ -73,8 +93,10 @@ class Chain {
 
   // Proof of work system
   mine(nonce: number) {
+
     let solution = 1;
     console.log('⛏️  mining...')
+    const start = new Date().getTime()
 
     while(true) {
 
@@ -83,8 +105,10 @@ class Chain {
 
       const attempt = hash.digest('hex');
 
-      if(attempt.substr(0,4) === '0000'){
+      if(attempt.substr(0,5) === '00000'){
         console.log(`Solved: ${solution}`);
+        let elapsed = new Date().getTime() - start;
+        console.log("Time required to mine the block: ", elapsed)
         return solution;
       }
 
@@ -93,13 +117,11 @@ class Chain {
   }
 
   // Add a new block to the chain if valid signature & proof of work is complete
-  addBlock(transaction: Transaction, senderPublicKey: string, signature: Buffer) {
-    const verify = crypto.createVerify('SHA256');
-    verify.update(transaction.toString());
-
-    const isValid = verify.verify(senderPublicKey, signature);
-
-    if (isValid) {
+  addBlock(transaction: Transaction, senderPublicKey: rsa.RsaPublicKey , signature: bigint) {
+    
+    //Validate is sender has signed the actual transaction
+    if (BigInt(transaction.serialize()) == senderPublicKey.verify(signature)) {
+      console.log("verified")
       const newBlock = new Block(this.lastBlock.hash, transaction);
       this.mine(newBlock.nonce);
       this.chain.push(newBlock);
@@ -108,47 +130,57 @@ class Chain {
 
 }
 
+
+
+
+
 // Wallet gives a user a public/private keypair
 class Wallet {
-  public publicKey: string;
-  public privateKey: string;
+  public publicKey: rsa.RsaPublicKey;
+  public privateKey: rsa.RsaPrivateKey;
   public money: number;
-  
-  constructor() {
+  public nickName : string;
 
-    const keypair = crypto.generateKeyPairSync('rsa', {
-      modulusLength: 2048,
-      publicKeyEncoding: { type: 'spki', format: 'pem' },
-      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
-    });
+  
+
+   constructor( amount: number, name : string, keyPair : rsa.rsaKeyPair) {
     
-    this.money = 200; //Empizan todos con 200$
-    this.privateKey = keypair.privateKey;
-    this.publicKey = keypair.publicKey;
+    this.publicKey = keyPair.publicKey; 
+    this.privateKey = keyPair.privateKey;
+    this.money = amount;
+    this.nickName = name;
   }
 
-  sendMoney(amount: number, payeePublicKey: string) {
+  
+
+  sendMoney(amount: number, payeePublicKey: rsa.RsaPublicKey, payeeWallet : Wallet) {
     const transaction = new Transaction(amount, this.publicKey, payeePublicKey);
 
-    const sign = crypto.createSign('SHA256');
-    sign.update(transaction.toString()).end();
+    const signature : bigint = this.privateKey.sign(BigInt(transaction.serialize()))
 
-    const signature = sign.sign(this.privateKey); 
     Chain.instance.addBlock(transaction, this.publicKey, signature);
 
     this.money = this.money - amount;
+    payeeWallet.money = payeeWallet.money + amount
 
-    console.log(this.money)
+    //console.log(this.money)
   }
 }
+
+
+
+
+/*
 
 async function getWallets() {
   try{
     const wallets: WalletI[] = await WalletModel.find(); 
-    console.log("wallets: ", wallets)
+    console.log("wallets loaded ")
+    
 
   }catch(error){
     console.log("error: ", error)
+    
   }
 
 }
@@ -158,8 +190,8 @@ async function setWallet(name: string, initialAmount : number) {
   const keyPair = await rsa.generateKeys(2049)
   let walletA = {
     nickName : name,
-    e: Number(keyPair.publicKey.e),
-    n: Number(keyPair.publicKey.n),
+    e: bc.bigintToText((keyPair.publicKey.e)),
+    n: bc.bigintToText((keyPair.publicKey.n)),
     amount : initialAmount
   }
   const walletAMongoose = new WalletModel(walletA);
@@ -177,37 +209,21 @@ async function setWallet(name: string, initialAmount : number) {
     
 }
 
-
-setWallet("SergioGras", 21)
-//getWallets()
-
-
-
-
-
-/*
-//Conexion con Mongo
-mongoose
-  .connect(config.mongo.url, config.mongo.options)
-  .then((result) => {
-    logging.info(NAMESPACE, 'Connected to mongoDB!');
-  })
-  .catch((error) => {
-    logging.error(NAMESPACE, error.message, error);
-  });
 */
 
-/*
-// Example usage
+async function testJuanelasTransactions(){
+  const AliceKeys =  await rsa.generateKeys(2049)
+  const AliceWallet = new Wallet(10, "Alice", AliceKeys)
+  const BobKeys =  await rsa.generateKeys(2049)
+  const BobWallet = new Wallet(20,"Bob", BobKeys)
 
-const satoshi = new Wallet();
-const bob = new Wallet();
-const alice = new Wallet();
+  AliceWallet.sendMoney(6, BobKeys.publicKey, BobWallet)
+  BobWallet.sendMoney(1, AliceKeys.publicKey, AliceWallet)
 
-satoshi.sendMoney(50, bob.publicKey);
-bob.sendMoney(23, alice.publicKey);
-alice.sendMoney(5, bob.publicKey);
+  console.log("Alice expected amount is (10-6+1)= 5, actual salary is: ", AliceWallet.money)
+  console.log("Bob expected amount is (20+6-1)= 5, actual salary is: ", BobWallet.money)
+  console.log("Actual blockchain: ", Chain.instance)
+  
+}
 
-console.log(Chain.instance)
-
-*/
+testJuanelasTransactions()
