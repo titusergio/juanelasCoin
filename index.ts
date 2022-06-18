@@ -25,31 +25,64 @@ interface publicKeyI {
   n : bigint
 }
 
+interface transactionLiteral {
+  amount: number,
+  payerN : string , //base64
+  payedN : string   //base64
+
+}
+
 // Transfer of funds between two wallets
 class Transaction {
   constructor(
     public amount: number, 
     public payer: publicKeyI, // public key
-    public payee: publicKeyI // public key
+    public payed: publicKeyI // public key
   ) {}
 
   serialize() {
     return this.amount
+  }
+
+  toLiterals(): transactionLiteral {
+
+    return {
+      amount : this.amount,
+      payerN : bc.bigintToBase64(this.payer.n),
+      payedN : bc.bigintToBase64(this.payed.n),
+
+    }
+
+
+  }
+
+  fromLiterals(obj:transactionLiteral): Transaction {
+
+  return new Transaction(obj.amount, new rsa.RsaPublicKey(65537n, bc.base64ToBigint(obj.payerN)), new rsa.RsaPublicKey(65537n, bc.base64ToBigint(obj.payerN)))
+
   }
 }
 
 // Individual block on the chain
 class Block {
 
-  public nonce = Math.round(Math.random() * 999999999);
+ // public nonce = Math.round(Math.random() * 999999999);  // === hash(trans)
+ public nonce:number
+
+ //obj nonce+trans
 
   constructor(
     public prevHash: string, 
-    public transaction: Transaction, 
+    public transaction: Transaction, //objTrans
     public ts = Date.now()
   ) {}
 
   get hash() {
+    const obj = {
+      nonce: this.nonce,
+      transaction : this.transaction.toLiterals()
+
+    }
     const str = JSON.stringify(this.prevHash + this.nonce + this.ts);
     const hash = crypto.createHash('SHA256');
     hash.update(str).end();
@@ -105,7 +138,7 @@ class Chain {
 
       const attempt = hash.digest('hex');
 
-      if(attempt.substr(0,5) === '00000'){
+      if(attempt.substr(0,4) === '0000'){
         console.log(`Solved: ${solution}`);
         let elapsed = new Date().getTime() - start;
         console.log("Time required to mine the block: ", elapsed)
@@ -169,47 +202,6 @@ class Wallet {
 
 
 
-
-/*
-
-async function getWallets() {
-  try{
-    const wallets: WalletI[] = await WalletModel.find(); 
-    console.log("wallets loaded ")
-    
-
-  }catch(error){
-    console.log("error: ", error)
-    
-  }
-
-}
-
-async function setWallet(name: string, initialAmount : number) {
-
-  const keyPair = await rsa.generateKeys(2049)
-  let walletA = {
-    nickName : name,
-    e: bc.bigintToText((keyPair.publicKey.e)),
-    n: bc.bigintToText((keyPair.publicKey.n)),
-    amount : initialAmount
-  }
-  const walletAMongoose = new WalletModel(walletA);
-  console.log("1", walletAMongoose)
-
-    try{
-        await walletAMongoose.save();
-        console.log("saved ? ", walletAMongoose)
-        
-
-    } catch (error:any) {
-      console.log("error: ", error)
-        
-    }
-    
-}
-
-*/
 
 async function testJuanelasTransactions(){
   const AliceKeys =  await rsa.generateKeys(2049)
