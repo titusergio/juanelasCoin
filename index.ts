@@ -14,11 +14,13 @@ console.log("starting...")
 
 
 
+/*
 mongoose.connect(CONNECTION_URL)                         
   .then(() => app.listen(PORT, () => console.log(`Base MongoDB conectado, servidor corriendo en el puerto: http://localhost:${PORT}`)))
 
   .catch((error) => console.log(`${error} no se pudo conectar`));
 
+  */
 
 interface publicKeyI {
   e : bigint,
@@ -32,7 +34,11 @@ interface transactionLiteral {
 
 }
 
-// Transfer of funds between two wallets
+
+
+
+
+// ********** TRANSFER of funds between two wallets *************************
 class Transaction {
   constructor(
     public amount: number, 
@@ -44,17 +50,20 @@ class Transaction {
     return this.amount
   }
 
-  toLiterals(): transactionLiteral {
+  toLiterals() : string {
 
-    return {
+    const obj = {
       amount : this.amount,
       payerN : bc.bigintToBase64(this.payer.n),
       payedN : bc.bigintToBase64(this.payed.n),
 
     }
-
-
-  }
+    
+      const str = JSON.stringify(obj);
+      const hash = crypto.createHash('SHA256');
+      hash.update(str).end();
+      return hash.digest('hex');
+    }
 
   fromLiterals(obj:transactionLiteral): Transaction {
 
@@ -63,11 +72,15 @@ class Transaction {
   }
 }
 
-// Individual block on the chain
+
+
+
+
+// ************INDIVIDUAL BLOCK IN THE CHAIN*******************************
 class Block {
 
  // public nonce = Math.round(Math.random() * 999999999);  // === hash(trans)
- public nonce:number
+ //public nonce:number
 
  //obj nonce+trans
 
@@ -79,11 +92,12 @@ class Block {
 
   get hash() {
     const obj = {
-      nonce: this.nonce,
-      transaction : this.transaction.toLiterals()
+      hash : this.prevHash,
+      transaction : this.transaction.toLiterals(),
+      date : this.ts.toString()
 
     }
-    const str = JSON.stringify(this.prevHash + this.nonce + this.ts);
+    const str = JSON.stringify(obj);
     const hash = crypto.createHash('SHA256');
     hash.update(str).end();
     return hash.digest('hex');
@@ -94,7 +108,7 @@ class Block {
 
 
 
-// The blockchain
+// ***********BLOCKCHAIN********************************************
 class Chain {
   // Singleton instance
   public static instance = new Chain();
@@ -125,18 +139,21 @@ class Chain {
   }
 
   // Proof of work system
-  mine(nonce: number) {
+  mine(blockHash: string) {
 
     let solution = 1;
+    let nonce = solution.toString()
     console.log('⛏️  mining...')
     const start = new Date().getTime()
 
     while(true) {
 
       const hash = crypto.createHash('MD5');
-      hash.update((nonce + solution).toString()).end();
+      hash.update((blockHash + nonce).toString()).end();
 
       const attempt = hash.digest('hex');
+
+      //console.log(attempt)
 
       if(attempt.substr(0,4) === '0000'){
         console.log(`Solved: ${solution}`);
@@ -146,18 +163,23 @@ class Chain {
       }
 
       solution += 1;
+      nonce = solution.toString()
     }
   }
 
   // Add a new block to the chain if valid signature & proof of work is complete
   addBlock(transaction: Transaction, senderPublicKey: rsa.RsaPublicKey , signature: bigint) {
+
     
+
     //Validate is sender has signed the actual transaction
-    if (BigInt(transaction.serialize()) == senderPublicKey.verify(signature)) {
+    if (bc.hexToBigint(transaction.toLiterals()) == senderPublicKey.verify(signature)) {
       console.log("verified")
       const newBlock = new Block(this.lastBlock.hash, transaction);
-      this.mine(newBlock.nonce);
+      this.mine(newBlock.hash);
       this.chain.push(newBlock);
+    }else{
+      console.log("fraudulent transaction")
     }
   }
 
@@ -189,7 +211,7 @@ class Wallet {
   sendMoney(amount: number, payeePublicKey: rsa.RsaPublicKey, payeeWallet : Wallet) {
     const transaction = new Transaction(amount, this.publicKey, payeePublicKey);
 
-    const signature : bigint = this.privateKey.sign(BigInt(transaction.serialize()))
+    const signature : bigint = this.privateKey.sign(bc.hexToBigint(transaction.toLiterals()))
 
     Chain.instance.addBlock(transaction, this.publicKey, signature);
 
@@ -202,6 +224,14 @@ class Wallet {
 
 
 
+
+
+
+
+
+
+
+//Test JUANELASCOIN
 
 async function testJuanelasTransactions(){
   const AliceKeys =  await rsa.generateKeys(2049)
