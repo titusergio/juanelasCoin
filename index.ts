@@ -114,13 +114,13 @@ class Chain {
   public static instance = new Chain();
 
   firstSender =  {
-    e : 1234n,
-    n : 3432525n
+    e : 65537n,
+    n : 3432452597n
   }
 
   firstReceiver =  {
-    e : 1234n,
-    n : 3432125n
+    e : 65537n,
+    n : 9725361125n
   }
 
   chain: Block[];
